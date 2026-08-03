@@ -79,6 +79,11 @@ import {
   updateChannelCommission,
   deleteChannelCommission,
 } from "@/actions/channel-commissions.actions"
+import {
+  getRecurringTemplates,
+  toggleRecurringTemplate,
+  deleteRecurringTemplate,
+} from "@/actions/recurring-templates.actions"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SOCIEDADES, MONEDAS } from "@/lib/constants"
 
@@ -124,6 +129,8 @@ export function MasterListsPageClient() {
 
   // Channels
   const [channels, setChannels] = useState<any[]>([])
+  // Recurring templates
+  const [recurringTemplates, setRecurringTemplates] = useState<any[]>([])
   const [newChannel, setNewChannel] = useState({ canal: '', porcentaje: '', descripcion: '' })
 
   // Plan ranges
@@ -173,7 +180,7 @@ export function MasterListsPageClient() {
   const loadLists = async () => {
     setLoading(true)
     try {
-      const [planesData, aliadosData, vendedoresData, tiposPagoData, conceptosData, bankAccountsData, itemConfigsData, customersData, channelsData] =
+      const [planesData, aliadosData, vendedoresData, tiposPagoData, conceptosData, bankAccountsData, itemConfigsData, customersData, channelsData, recurringData] =
         await Promise.all([
           getPlanes(),
           getAliados(),
@@ -184,6 +191,7 @@ export function MasterListsPageClient() {
           getItemConfigs(),
           getCustomers(),
           getChannelCommissions().catch(() => []),
+          getRecurringTemplates().catch(() => []),
         ])
 
       setPlanes(planesData || [])
@@ -195,6 +203,7 @@ export function MasterListsPageClient() {
       setItemConfigs(itemConfigsData || [])
       setCustomers(customersData || [])
       setChannels(channelsData || [])
+      setRecurringTemplates(recurringData || [])
     } catch (error) {
       console.error("Failed to load lists:", error)
     } finally {
@@ -463,6 +472,7 @@ export function MasterListsPageClient() {
         <TabsTrigger value="items">Items ({itemConfigs.length})</TabsTrigger>
         <TabsTrigger value="clientes">Clientes ({customers.length})</TabsTrigger>
         <TabsTrigger value="canales">Canales ({channels.length})</TabsTrigger>
+        <TabsTrigger value="recurrentes">Recurrentes ({recurringTemplates.filter((t: any) => t.activo).length})</TabsTrigger>
         <TabsTrigger value="nomina">Nómina</TabsTrigger>
       </TabsList>
 
@@ -1421,6 +1431,69 @@ export function MasterListsPageClient() {
                     </TableCell>
                   </TableRow>
                 ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      {/* FACTURAS RECURRENTES */}
+      <TabsContent value="recurrentes">
+        <Card>
+          <CardHeader>
+            <CardTitle>Facturas Recurrentes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground mb-4">Facturas que se crean automaticamente cada mes. Desactiva las que no deben generarse mas.</p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead>Sociedad</TableHead>
+                  <TableHead>Dia</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Moneda</TableHead>
+                  <TableHead>Vendedor</TableHead>
+                  <TableHead>Activo</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recurringTemplates.map((t: any) => (
+                  <TableRow key={t.id} className={!t.activo ? 'opacity-50' : ''}>
+                    <TableCell className="font-medium text-xs">{t.alegra_client_name || '—'}</TableCell>
+                    <TableCell className="text-xs">{t.sociedad || '—'}</TableCell>
+                    <TableCell className="text-xs">{t.dia_recurrencia || '—'}</TableCell>
+                    <TableCell className="text-xs font-medium">{new Intl.NumberFormat('es-CO').format(t.total || 0)}</TableCell>
+                    <TableCell className="text-xs">{t.moneda || 'COP'}</TableCell>
+                    <TableCell className="text-xs">{t.vendedor_nombre || '—'}</TableCell>
+                    <TableCell>
+                      <Switch
+                        checked={t.activo}
+                        onCheckedChange={async (checked) => {
+                          try {
+                            await toggleRecurringTemplate(t.id, checked)
+                            setRecurringTemplates(prev => prev.map(x => x.id === t.id ? { ...x, activo: checked } : x))
+                          } catch (e) { alert(e instanceof Error ? e.message : 'Error') }
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={async () => {
+                        if (!confirm('¿Eliminar esta factura recurrente?')) return
+                        try {
+                          await deleteRecurringTemplate(t.id)
+                          setRecurringTemplates(prev => prev.filter(x => x.id !== t.id))
+                        } catch (e) { alert(e instanceof Error ? e.message : 'Error') }
+                      }}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {recurringTemplates.length === 0 && (
+                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No hay facturas recurrentes configuradas</TableCell></TableRow>
+                )}
               </TableBody>
             </Table>
           </CardContent>
