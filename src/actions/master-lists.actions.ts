@@ -44,6 +44,19 @@ export async function deletePlan(id: string) {
   revalidatePath("/settings/master-lists")
 }
 
+// Update plan name and description
+export async function updatePlanName(planId: string, nombre: string, descripcion?: string | null) {
+  const supabase = await createClient()
+  const update: Record<string, any> = { nombre }
+  if (descripcion !== undefined) update.descripcion = descripcion
+  const { error } = await (supabase as any)
+    .from("planes")
+    .update(update)
+    .eq("id", planId)
+  if (error) throw new Error(error.message)
+  revalidatePath("/settings/master-lists")
+}
+
 // Update plan's Alegra item ID
 export async function updatePlanAlegraItemId(planId: string, alegraItemId: string | null) {
   const supabase = await createClient()

@@ -503,10 +503,35 @@ export function MasterListsPageClient() {
                 )
                 return (
                   <div key={plan.id} className="border rounded-lg p-3">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <span className="font-semibold">{plan.nombre}</span>
-                        {plan.descripcion && <span className="text-sm text-muted-foreground ml-2">{plan.descripcion}</span>}
+                    <div className="flex justify-between items-center gap-2">
+                      <div className="flex items-center gap-2 flex-1">
+                        <Input
+                          className="h-8 text-sm font-semibold max-w-xs"
+                          defaultValue={plan.nombre}
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim()
+                            if (!val || val === plan.nombre) return
+                            try {
+                              const { updatePlanName } = await import('@/actions/master-lists.actions')
+                              await updatePlanName(plan.id, val)
+                              plan.nombre = val
+                            } catch (err) { alert(err instanceof Error ? err.message : 'Error') }
+                          }}
+                        />
+                        <Input
+                          className="h-8 text-xs text-muted-foreground max-w-xs"
+                          defaultValue={plan.descripcion || ''}
+                          placeholder="Descripcion (opcional)"
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim()
+                            if (val === (plan.descripcion || '')) return
+                            try {
+                              const { updatePlanName } = await import('@/actions/master-lists.actions')
+                              await updatePlanName(plan.id, plan.nombre, val || null)
+                              plan.descripcion = val || null
+                            } catch (err) { alert(err instanceof Error ? err.message : 'Error') }
+                          }}
+                        />
                       </div>
                       <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDeletePlan(plan.id)}>
                         <Trash2 className="h-4 w-4" />
