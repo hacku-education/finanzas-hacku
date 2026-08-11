@@ -32,4 +32,16 @@ export async function deleteRecurringTemplate(id: string) {
     .eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/settings/master-lists')
+  revalidatePath('/recurring')
+}
+
+export async function updateRecurringTemplate(id: string, data: Record<string, any>) {
+  const supabase = await createClient()
+  const { error } = await (supabase as any)
+    .from('recurring_invoice_templates')
+    .update({ ...data, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+  revalidatePath('/settings/master-lists')
+  revalidatePath('/recurring')
 }

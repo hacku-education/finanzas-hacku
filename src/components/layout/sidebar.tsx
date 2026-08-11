@@ -31,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 const navItems = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/alegra-invoices', icon: Receipt, label: 'Solicitud de Factura' },
+  { href: '/recurring', icon: Receipt, label: 'Recurrentes' },
   { href: '/income-invoices', icon: ArrowDownCircle, label: 'Facturas Ingreso' },
   { href: '/mrr', icon: BarChart3, label: 'MRR / ARR' },
   { href: '/analytics', icon: Activity, label: 'Analytics' },
