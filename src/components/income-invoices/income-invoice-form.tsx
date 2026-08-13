@@ -99,29 +99,25 @@ export function IncomeInvoiceForm({
   // Load master lists
   useEffect(() => {
     if (!open) return
-    Promise.all([
-      getVendedores(),
-      getAliados(),
-      getPlanes(),
-      getHackuClientes(),
-    ]).then(([v, a, p, hc]) => {
-      setVendedores(v || [])
-      setAliados(a || [])
+    // Load each independently so one failure doesn't block the others
+    getVendedores().then(d => setVendedores(d || [])).catch(console.error)
+    getAliados().then(d => setAliados(d || [])).catch(console.error)
+    getHackuClientes().then(d => setHackuClientes(d || [])).catch(console.error)
+    getChannelCommissions().then(d => setChannelConfigs(d || [])).catch(console.error)
+    getPlanes().then(p => {
       setPlanes(p || [])
-      setHackuClientes(hc || [])
       const mappedPlanes = (p || []).map((pl: any) => ({
         id: `plan_${pl.id}`,
         name: pl.nombre,
         moneda: '',
         precio_default: 0,
+        alegra_item_id: pl.alegra_item_id || null,
         commission_ranges: (pl.plan_commission_ranges || []).map((r: any) => ({
           precio_desde: r.precio_desde,
           precio_hasta: r.precio_hasta,
           porcentaje_comision: r.porcentaje_comision,
           moneda: r.moneda || 'COP',
         })),
-        // Default para el selector "Tipo de negocio" por ítem (spec 002).
-        tipo_negocio_default: pl.frecuencia_recurrencia === 'one-time' ? 'one_time' : 'recurrente',
         _type: 'plan',
       }))
       setAvailableItems([
@@ -129,7 +125,7 @@ export function IncomeInvoiceForm({
         ...mappedPlanes,
       ])
       setItemsLoaded(true)
-    }).catch(console.error)
+    }).catch(e => { console.error('[Planes]', e); setItemsLoaded(true) })
   }, [open])
 
   const form = useForm<IncomeInvoiceFormData>({
