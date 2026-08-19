@@ -684,8 +684,8 @@ const SLACK_NOTIFY_CHANNEL = 'C04JUTJQ7AN'
 const SLACK_NOTIFY_USERS = [
   'U020B382918',  // Tati
   'U0B0CGUCVDX',  // Aleja
-  'U04CTV3SYAU',  // Jeremy
   'U052L6W2F6J',  // Mari
+  // TODO: Add Mauricio Valencia (mauricio.valencia@hacku.com) Slack ID here
 ]
 
 export async function sendSlackNewRequestNotification(data: {
