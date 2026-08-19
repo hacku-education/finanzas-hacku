@@ -16,5 +16,13 @@ export async function GET() {
     }),
   })
   const data = await res.json()
-  return NextResponse.json({ ok: data.ok, error: data.error || null })
+  return NextResponse.json({
+    ok: data.ok,
+    error: data.error || null,
+    channel: data.channel || null,
+    ts: data.ts || null,
+    message: data.message?.text || null,
+    warning: data.warning || null,
+    response_metadata: data.response_metadata || null,
+  })
 }
