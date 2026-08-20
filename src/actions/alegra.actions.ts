@@ -685,7 +685,7 @@ const SLACK_NOTIFY_USERS = [
   'U020B382918',  // Tati
   'U0B0CGUCVDX',  // Aleja
   'U052L6W2F6J',  // Mari
-  'D0BR2UTGJAY',  // Mauricio Valencia
+  'U0BQ4HYGMMY',  // Mauricio Valencia
 ]
 
 export async function sendSlackNewRequestNotification(data: {
