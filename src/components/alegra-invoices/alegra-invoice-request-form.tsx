@@ -447,6 +447,7 @@ export function AlegraInvoiceRequestForm({
       const shouldSendToAlegra = isHackuSAS && !esClienteNuevo && !generarLinkPago
 
       let alegraError = ''
+      let slackWarning = ''
       if (shouldSendToAlegra) {
         try {
           let currencyPayload: { code: string; exchangeRate: string } | undefined
@@ -677,7 +678,7 @@ export function AlegraInvoiceRequestForm({
 
       // 5. Send Slack notification (awaited to ensure it completes)
       try {
-        await sendSlackNewRequestNotification({
+        const slackResult = await sendSlackNewRequestNotification({
           client_name: data.alegra_client_name,
           sociedad: data.sociedad,
           moneda: data.moneda,
@@ -691,14 +692,28 @@ export function AlegraInvoiceRequestForm({
           num_cuotas: esDiferido ? numeroCuotas : undefined,
           stripe_payment_url: stripePaymentUrl || undefined,
         })
-      } catch (slackErr) {
+        // sendSlackNewRequestNotification nunca lanza (siempre resuelve un objeto),
+        // pero puede indicar el fallo con { ok: false, error } — sin esto quedaba
+        // invisible: la solicitud se guardaba bien y nadie se enteraba de que el
+        // aviso de Slack no había salido.
+        if (!slackResult || slackResult.ok === false) {
+          slackWarning = slackResult?.error || 'Error desconocido al notificar a Slack'
+        }
+      } catch (slackErr: any) {
         console.error('[Slack] Failed:', slackErr)
+        slackWarning = slackErr?.message || 'Error inesperado al notificar a Slack'
       }
 
+      const hasWarning = alegraError || slackWarning
+      const warningParts = [
+        alegraError && `Alegra falló: ${alegraError.substring(0, 100)}`,
+        slackWarning && `Slack falló: ${slackWarning.substring(0, 100)}`,
+      ].filter(Boolean)
+
       toast({
-        title: alegraError ? 'Solicitud creada (con advertencia)' : 'Solicitud creada',
-        description: alegraError
-          ? `Solicitud guardada pero Alegra falló: ${alegraError.substring(0, 100)}`
+        title: hasWarning ? 'Solicitud creada (con advertencia)' : 'Solicitud creada',
+        description: hasWarning
+          ? `Solicitud guardada, pero ${warningParts.join(' | ')}`
           : shouldSendToAlegra
             ? tipoDocumento === 'orden_servicio'
               ? 'Orden de servicio creada en Alegra y solicitud registrada.'
@@ -706,7 +721,7 @@ export function AlegraInvoiceRequestForm({
             : esClienteNuevo
               ? 'Solicitud registrada con cliente nuevo (pendiente de aprobación).'
               : 'Solicitud registrada (pendiente de facturación).',
-        variant: alegraError ? 'destructive' : 'default',
+        variant: hasWarning ? 'destructive' : 'default',
       })
       form.reset()
       setClientSearch('')
