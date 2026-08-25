@@ -680,6 +680,17 @@ export async function getLocalClients(sociedad: string, query?: string) {
 // 13. SEND SLACK NOTIFICATION ON NEW INVOICE REQUEST
 // ---------------------------------------------------------------------------
 
+// IMPORTANT — el SLACK_BOT_TOKEN (env var, no está en este repo) debe pertenecer
+// a una Slack App instalada por una identidad "de servicio" durable (un admin del
+// workspace, no la cuenta personal de un empleado puntual). Slack puede revocar el
+// token de una app cuando el usuario que la instaló/autorizó es desactivado (offboarding
+// vía SSO/SCIM con "revoke tokens" activado) — esto ya rompió las notificaciones una vez
+// cuando se desactivó la cuenta de un ex-empleado que había montado la integración.
+// Si las notificaciones dejan de llegar, ver el error de Slack devuelto abajo:
+// `account_inactive` / `token_revoked` / `invalid_auth` = exactamente este escenario.
+// Fix: reinstalar la app en https://api.slack.com/apps (OAuth & Permissions →
+// "Reinstall to Workspace") usando la cuenta de un admin actual, y actualizar
+// SLACK_BOT_TOKEN en Vercel (Production + Preview).
 const SLACK_NOTIFY_CHANNEL = 'C04JUTJQ7AN'
 const SLACK_NOTIFY_USERS = [
   'U020B382918',  // Tati
@@ -687,6 +698,17 @@ const SLACK_NOTIFY_USERS = [
   'U052L6W2F6J',  // Mari
   'U0BQ4HYGMMY',  // Mauricio Valencia
 ]
+
+// Errores de Slack que indican problemas de credenciales/token (no de código) —
+// se traducen a un mensaje accionable en vez del código crudo de la API.
+const SLACK_AUTH_ERROR_HINTS: Record<string, string> = {
+  account_inactive: 'el token pertenece a un usuario de Slack dado de baja — hay que reinstalar la app en api.slack.com/apps y actualizar SLACK_BOT_TOKEN en Vercel',
+  invalid_auth: 'token inválido o revocado — reinstalar la app en api.slack.com/apps y actualizar SLACK_BOT_TOKEN en Vercel',
+  token_revoked: 'el token fue revocado (posible baja del usuario que instaló la app) — reinstalar la app y actualizar SLACK_BOT_TOKEN en Vercel',
+  not_in_channel: `el bot no está en el canal ${SLACK_NOTIFY_CHANNEL} — invitalo con /invite @hackÜ Finance`,
+  channel_not_found: 'el canal configurado no existe o el bot no tiene acceso',
+  missing_scope: 'a la app le falta el scope chat:write (revisar OAuth & Permissions)',
+}
 
 export async function sendSlackNewRequestNotification(data: {
   client_name: string
@@ -705,7 +727,7 @@ export async function sendSlackNewRequestNotification(data: {
   const botToken = process.env.SLACK_BOT_TOKEN
   if (!botToken) {
     console.error('[Slack] SLACK_BOT_TOKEN not configured in environment')
-    return null
+    return { ok: false, error: 'SLACK_BOT_TOKEN no está configurado en el entorno' }
   }
 
   const mentions = SLACK_NOTIFY_USERS.map(id => `<@${id}>`).join(' ')
@@ -774,20 +796,29 @@ export async function sendSlackNewRequestNotification(data: {
         channel: SLACK_NOTIFY_CHANNEL,
         username: 'hackÜ Finance',
         icon_emoji: ':money_with_wings:',
+        // Fallback text: usado por Slack para notificaciones push/preview cuando
+        // el cliente no puede renderizar los `blocks` (ver nota debajo).
+        text: `🧾 Nueva Solicitud de Factura — ${data.client_name} (${totalStr} ${data.moneda})`,
         blocks,
       }),
     })
 
+    // chat.postMessage puede devolver HTTP 200 con { ok: false, error } — nunca
+    // lanza por sí solo (canal inválido, bot no invitado, token revocado, etc.),
+    // por eso siempre hay que revisar `result.ok` y no solo si el fetch no falló.
     const result = await res.json()
     if (!result.ok) {
-      console.error('[Slack] Error:', result.error)
-    } else {
-      console.log('[Slack] Notification sent')
+      const hint = SLACK_AUTH_ERROR_HINTS[result.error]
+      console.error('[Slack] Error:', result.error, hint ? `— ${hint}` : '')
+      // Adjuntamos el hint al mensaje que ve el usuario (ver toast en el form)
+      // para que el código de error de Slack no llegue crudo a quien no conoce la API.
+      return { ...result, error: hint ? `${result.error} (${hint})` : result.error }
     }
+    console.log('[Slack] Notification sent')
     return result
   } catch (error) {
     console.error('[Slack] Exception:', error)
-    return null
+    return { ok: false, error: error instanceof Error ? error.message : 'Excepción desconocida al llamar a Slack' }
   }
 }
 

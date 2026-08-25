@@ -4,6 +4,10 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { sendSlackNewRequestNotification } from "@/actions/alegra.actions"
 import { requireCronSecret } from "@/lib/api-auth"
 
+// Ver nota en /api/ping-slack/route.ts: sin esto, Next.js puede servir una
+// respuesta cacheada en vez de golpear a Slack en cada request.
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   const denied = requireCronSecret(request)
   if (denied) return denied
@@ -52,7 +56,8 @@ export async function GET(request: Request) {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { "Authorization": `Bearer ${botToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ channel: "C04JUTJQ7AN", text: "🧪 Test — Slack conectado." }),
+      cache: 'no-store',
+      body: JSON.stringify({ channel: "C04JUTJQ7AN", text: `🧪 Test — Slack conectado. (${new Date().toISOString()})` }),
     })
     const data = await res.json()
     return NextResponse.json({ ok: data.ok, error: data.error || null, token_prefix: botToken.substring(0, 10) + "..." })
