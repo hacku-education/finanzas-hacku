@@ -355,6 +355,16 @@ export function AlegraInvoiceRequestForm({
     }
   }, [selectedVendedorNombre])
 
+  // Sociedades sin Alegra (LLC/MEX…): permitir facturar a un nombre escrito a mano
+  // que aún no existe en facturas de ingreso ni solicitudes, sin marcarlo como
+  // "cliente nuevo" (que implica canal de origen/comisión de cliente nuevo).
+  const trimmedClientSearch = clientSearch.trim()
+  const canUseFreeClientName =
+    !isSAS &&
+    !clientsLoading &&
+    trimmedClientSearch.length >= 2 &&
+    !clients.some((c: any) => String(c.name).trim().toLowerCase() === trimmedClientSearch.toLowerCase())
+
   function handleSelectClient(client: any) {
     form.setValue('alegra_client_id', String(client.id))
     form.setValue('alegra_client_name', client.name)
@@ -916,7 +926,7 @@ export function AlegraInvoiceRequestForm({
                           )}
                         </div>
                       </FormControl>
-                      {showClientResults && clients.length > 0 && (
+                      {showClientResults && (clients.length > 0 || canUseFreeClientName) && (
                         <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
                           {clients.map((client) => (
                             <button
@@ -928,6 +938,16 @@ export function AlegraInvoiceRequestForm({
                               {client.name} {isSAS && client.identification ? `- ${client.identification}` : ''}
                             </button>
                           ))}
+                          {canUseFreeClientName && (
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 hover:bg-slate-100 text-sm border-t text-blue-700"
+                              onClick={() => handleSelectClient({ id: 'manual', name: clientSearch.trim() })}
+                            >
+                              <Plus className="inline mr-1 h-3 w-3" />
+                              Usar «{clientSearch.trim()}» como cliente
+                            </button>
+                          )}
                         </div>
                       )}
                       <FormMessage />

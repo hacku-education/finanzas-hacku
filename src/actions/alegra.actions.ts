@@ -4,6 +4,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { revalidatePath } from 'next/cache'
+import { SOCIEDADES } from '@/lib/constants'
 
 // ---------------------------------------------------------------------------
 // Helper for Alegra API calls
@@ -650,6 +651,8 @@ export async function sendDiferidoToSheets(data: {
 // ---------------------------------------------------------------------------
 
 export async function getLocalClients(sociedad: string, query?: string) {
+  // sociedad se interpola en un filtro .or() de PostgREST — solo valores conocidos.
+  if (!(SOCIEDADES as string[]).includes(sociedad)) return []
   const supabase = await createClient()
 
   let dbQuery = (supabase as any)
@@ -665,14 +668,67 @@ export async function getLocalClients(sociedad: string, query?: string) {
 
   dbQuery = dbQuery.limit(100)
 
-  const { data, error } = await dbQuery
+  // También clientes de solicitudes previas de la misma sociedad: así un cliente
+  // creado a mano (sin factura de ingreso registrada aún) queda disponible para
+  // las siguientes solicitudes. Se excluyen rechazadas/anuladas.
+  let requestsQuery = (supabase as any)
+    .from('alegra_invoice_requests')
+    .select('alegra_client_name')
+    .eq('sociedad', sociedad)
+    .not('alegra_client_name', 'is', null)
+    .not('status', 'in', '(rechazada,anulada)')
+    .order('created_at', { ascending: false })
+
+  if (query) {
+    requestsQuery = requestsQuery.ilike('alegra_client_name', `%${query}%`)
+  }
+
+  requestsQuery = requestsQuery.limit(100)
+
+  // Y clientes creados en la sección Clientes (tabla customers) para esta
+  // sociedad o sin sociedad asignada — el camino "creo el cliente y luego facturo".
+  let customersQuery = (supabase as any)
+    .from('customers')
+    .select('nombre_cliente')
+    .or(`sociedad_cliente.eq."${sociedad}",sociedad_cliente.is.null`)
+    .order('nombre_cliente', { ascending: true })
+
+  if (query) {
+    customersQuery = customersQuery.ilike('nombre_cliente', `%${query}%`)
+  }
+
+  customersQuery = customersQuery.limit(100)
+
+  const [
+    { data, error },
+    { data: requestsData, error: requestsError },
+    { data: customersData, error: customersError },
+  ] = await Promise.all([dbQuery, requestsQuery, customersQuery])
   if (error) {
     console.error('[LocalClients] Error:', error.message)
     return []
   }
+  if (requestsError) {
+    console.error('[LocalClients] Requests error:', requestsError.message)
+  }
+  if (customersError) {
+    console.error('[LocalClients] Customers error:', customersError.message)
+  }
 
-  // Get unique client names
-  const unique = Array.from(new Set((data || []).map((r: any) => r.razon_social_cliente).filter(Boolean))) as string[]
+  // Unique client names (case/espacios-insensible, gana la primera variante vista)
+  const byKey = new Map<string, string>()
+  const names = [
+    ...(data || []).map((r: any) => r.razon_social_cliente),
+    ...(requestsData || []).map((r: any) => r.alegra_client_name),
+    ...(customersData || []).map((r: any) => r.nombre_cliente),
+  ]
+  for (const raw of names) {
+    const name = typeof raw === 'string' ? raw.trim() : ''
+    if (!name) continue
+    const key = name.toLowerCase().replace(/\s+/g, ' ')
+    if (!byKey.has(key)) byKey.set(key, name)
+  }
+  const unique = Array.from(byKey.values()).sort((a, b) => a.localeCompare(b, 'es'))
   return unique.map((name: string, i: number) => ({ id: `local-${i}`, name }))
 }
 
