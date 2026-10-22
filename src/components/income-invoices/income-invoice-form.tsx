@@ -291,8 +291,10 @@ export function IncomeInvoiceForm({
     }
   }, [watchedVendedorId, vendedores])
 
-  // Convert to USD
+  // Convert to USD — `cancelled` descarta respuestas de totales intermedios
+  // que lleguen tarde (ver nota en alegra-invoice-request-form).
   useEffect(() => {
+    let cancelled = false
     async function convert() {
       const total = grandTotal > 0 ? grandTotal : (form.getValues('monto_recurrente') || 0) + (form.getValues('monto_no_recurrente') || 0) + (form.getValues('monto_creacion_contenido') || 0)
       if (total <= 0) { setTotalUSD(null); setExchangeRateInfo(''); return }
@@ -300,12 +302,14 @@ export function IncomeInvoiceForm({
       if (!watchedMoneda) return
       try {
         const result = await convertToUSDClient(total, watchedMoneda, watchedFechaCreacion)
+        if (cancelled) return
         setTotalUSD(result.amountUSD)
         form.setValue('total_usd', result.amountUSD)
         setExchangeRateInfo(`Tasa: 1 USD = ${result.rate} ${watchedMoneda} (${result.source})`)
-      } catch { setTotalUSD(null); setExchangeRateInfo('') }
+      } catch { if (!cancelled) { setTotalUSD(null); setExchangeRateInfo('') } }
     }
     convert()
+    return () => { cancelled = true }
   }, [grandTotal, watchedMoneda, watchedFechaCreacion])
 
   // Set legacy monto_recurrente from items total

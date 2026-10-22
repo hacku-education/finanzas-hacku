@@ -256,8 +256,12 @@ export function AlegraInvoiceRequestForm({
     0
   )
 
-  // Convert to USD when moneda or total changes
+  // Convert to USD when moneda or total changes.
+  // `cancelled` descarta respuestas de totales intermedios (p. ej. mientras se
+  // escribe el precio): sin esto una respuesta vieja que llega tarde pisaba el
+  // USD del total final y se guardaba/mandaba a Slack un total_usd erróneo.
   useEffect(() => {
+    let cancelled = false
     async function convert() {
       if (watchedMoneda && watchedMoneda !== 'USD' && grandTotal > 0) {
         try {
@@ -266,9 +270,11 @@ export function AlegraInvoiceRequestForm({
             watchedMoneda,
             watchedFechaEmision || undefined
           )
+          if (cancelled) return
           setTotalUSD(result.amountUSD)
           setExchangeRateInfo(`Tasa: 1 USD = ${result.rate} ${watchedMoneda} (${result.source})`)
         } catch {
+          if (cancelled) return
           setTotalUSD(null)
           setExchangeRateInfo('')
         }
@@ -278,6 +284,7 @@ export function AlegraInvoiceRequestForm({
       }
     }
     convert()
+    return () => { cancelled = true }
   }, [grandTotal, watchedMoneda, watchedFechaEmision])
 
   // Auto-calculate installments when diferido params change
