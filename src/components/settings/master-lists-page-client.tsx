@@ -86,6 +86,8 @@ import {
 } from "@/actions/recurring-templates.actions"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SOCIEDADES, MONEDAS } from "@/lib/constants"
+import { AlegraFiscalFields } from "@/components/customers/alegra-fiscal-fields"
+import { requiresAlegra, validateFiscal, mustRequireFiscal } from "@/lib/alegra-fiscal"
 
 export function MasterListsPageClient() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,7 +124,17 @@ export function MasterListsPageClient() {
     sociedades_hacku: [] as string[],
     moneda_default: 'COP',
     notas: '',
+    // Datos fiscales (obligatorios para hackÜ SAS → se crea en Alegra)
+    tipo_identificacion: '',
+    numero_identificacion: '',
+    dv: '',
+    tipo_persona: '',
+    regimen: '',
+    direccion: '',
+    departamento: '',
+    ciudad: '',
   })
+  const [customerFiscalErrors, setCustomerFiscalErrors] = useState<Record<string, string>>({})
   const [addingRangeFor, setAddingRangeFor] = useState<string | null>(null)
   const [newRange, setNewRange] = useState({ precio_desde: "", precio_hasta: "", porcentaje_comision: "", moneda: "COP" })
   const [loading, setLoading] = useState(true)
@@ -1191,7 +1203,8 @@ export function MasterListsPageClient() {
               <CardTitle>Gestión de Clientes</CardTitle>
               <Button size="sm" onClick={() => {
                 setEditingCustomer(null)
-                setCustomerForm({ nombre_cliente: '', sociedad_cliente: '', pais: '', email: '', kam_responsable: '', tiene_factoraje: false, pronto_pago: false, dias_pago: '', razones_sociales: '', sociedades_hacku: [], moneda_default: 'COP', notas: '' })
+                setCustomerForm({ nombre_cliente: '', sociedad_cliente: '', pais: '', email: '', kam_responsable: '', tiene_factoraje: false, pronto_pago: false, dias_pago: '', razones_sociales: '', sociedades_hacku: [], moneda_default: 'COP', notas: '', tipo_identificacion: '', numero_identificacion: '', dv: '', tipo_persona: '', regimen: '', direccion: '', departamento: '', ciudad: '' })
+                setCustomerFiscalErrors({})
                 setCustomerDialogOpen(true)
               }}>
                 <Plus className="mr-1 h-4 w-4" /> Nuevo Cliente
@@ -1262,7 +1275,16 @@ export function MasterListsPageClient() {
                               sociedades_hacku: c.sociedades_hacku || [],
                               moneda_default: c.moneda_default || 'COP',
                               notas: c.notas || '',
+                              tipo_identificacion: c.tipo_identificacion || '',
+                              numero_identificacion: c.numero_identificacion || '',
+                              dv: c.dv || '',
+                              tipo_persona: c.tipo_persona || '',
+                              regimen: c.regimen || '',
+                              direccion: c.direccion || '',
+                              departamento: c.departamento || '',
+                              ciudad: c.ciudad || '',
                             })
+                            setCustomerFiscalErrors({})
                             setCustomerDialogOpen(true)
                           }}>
                             <Pencil className="h-3 w-3" />
@@ -1302,12 +1324,14 @@ export function MasterListsPageClient() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label>Email principal</Label>
+                  <Label>Email principal{requiresAlegra(customerForm) ? ' *' : ''}</Label>
                   <Input value={customerForm.email} onChange={(e) => setCustomerForm(f => ({ ...f, email: e.target.value }))} placeholder="email@empresa.com" className="mt-1" />
+                  {customerFiscalErrors.email && <p className="text-xs text-red-600 mt-1">{customerFiscalErrors.email}</p>}
                 </div>
                 <div>
                   <Label>País</Label>
                   <Input value={customerForm.pais} onChange={(e) => setCustomerForm(f => ({ ...f, pais: e.target.value }))} placeholder="Colombia" className="mt-1" />
+                  {customerFiscalErrors.pais && <p className="text-xs text-red-600 mt-1">{customerFiscalErrors.pais}</p>}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -1346,6 +1370,15 @@ export function MasterListsPageClient() {
                   ))}
                 </div>
               </div>
+              {requiresAlegra(customerForm) && (
+                <AlegraFiscalFields
+                  value={customerForm}
+                  onChange={(patch) => setCustomerForm(f => ({ ...f, ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, v ?? ''])) }))}
+                  errors={customerFiscalErrors}
+                  showEmail={false}
+                  showCiudad
+                />
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox checked={customerForm.tiene_factoraje} onCheckedChange={(v) => setCustomerForm(f => ({ ...f, tiene_factoraje: v === true }))} />
@@ -1381,17 +1414,30 @@ export function MasterListsPageClient() {
                   sociedades_hacku: customerForm.sociedades_hacku,
                   moneda_default: customerForm.moneda_default,
                   notas: customerForm.notas || null,
+                  ciudad: customerForm.ciudad || null,
+                  tipo_identificacion: customerForm.tipo_identificacion || null,
+                  numero_identificacion: customerForm.numero_identificacion.trim() || null,
+                  dv: customerForm.dv || null,
+                  tipo_persona: customerForm.tipo_persona || null,
+                  regimen: customerForm.regimen || null,
+                  direccion: customerForm.direccion.trim() || null,
+                  departamento: customerForm.departamento || null,
+                }
+                if (mustRequireFiscal(payload, editingCustomer)) {
+                  const fiscalErrors = validateFiscal(payload)
+                  setCustomerFiscalErrors(fiscalErrors)
+                  if (Object.keys(fiscalErrors).length > 0) return
                 }
                 try {
-                  if (editingCustomer) {
-                    await updateCustomer(editingCustomer.id, payload)
-                    setCustomers(prev => prev.map(c => c.id === editingCustomer.id ? { ...c, ...payload } : c))
-                  } else {
-                    await createCustomer(payload)
-                    const refreshed = await getCustomers()
-                    setCustomers(refreshed || [])
-                  }
+                  const { alegra } = editingCustomer
+                    ? await updateCustomer(editingCustomer.id, payload)
+                    : await createCustomer(payload)
+                  const refreshed = await getCustomers()
+                  setCustomers(refreshed || [])
                   setCustomerDialogOpen(false)
+                  if (alegra.status === 'error') {
+                    alert(`Cliente guardado, pero no se pudo crear en Alegra: ${alegra.error.substring(0, 300)}`)
+                  }
                 } catch (e) {
                   alert(e instanceof Error ? e.message : 'Error')
                 }

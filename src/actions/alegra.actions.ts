@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { revalidatePath } from 'next/cache'
 import { SOCIEDADES } from '@/lib/constants'
+import { splitNombrePersona, TIPOS_ID_EXTRANJEROS } from '@/lib/alegra-fiscal'
 
 // ---------------------------------------------------------------------------
 // Helper for Alegra API calls
@@ -77,6 +78,75 @@ export async function getAlegraContacts(query?: string, start: number = 0) {
     data: result.data ?? result,
     total: result.metadata?.total ?? 0,
   }
+}
+
+// ---------------------------------------------------------------------------
+// 1c. CREATE CONTACT (client) from a customer's fiscal data
+// ---------------------------------------------------------------------------
+// Antes de crear busca por número de identificación para no duplicar: el
+// parámetro `query` de Alegra busca por nombre/identificación, y luego se
+// compara el número exacto en los resultados.
+
+function contactIdentificationNumber(contact: any): string {
+  const raw = contact?.identificationObject?.number ?? contact?.identification ?? ''
+  return String(raw).replace(/\D/g, '')
+}
+
+async function findAlegraContactByIdentification(numero: string): Promise<any | null> {
+  const target = numero.replace(/\D/g, '')
+  if (!target) return null
+  const params = new URLSearchParams({ start: '0', limit: '30', query: numero.trim() })
+  const result = await alegraFetch(`/contacts?${params.toString()}`)
+  const data: any[] = result.data ?? result
+  if (!Array.isArray(data)) return null
+  return data.find((c) => contactIdentificationNumber(c) === target) ?? null
+}
+
+export async function createAlegraContact(c: {
+  nombre_cliente: string
+  tipo_identificacion: string
+  numero_identificacion: string
+  dv?: string | null
+  tipo_persona: string
+  regimen: string
+  direccion: string
+  departamento?: string | null
+  ciudad: string
+  pais?: string | null
+  email: string
+}): Promise<{ id: string; existing: boolean }> {
+  const existing = await findAlegraContactByIdentification(c.numero_identificacion)
+  if (existing) return { id: String(existing.id), existing: true }
+
+  const extranjero = TIPOS_ID_EXTRANJEROS.includes(c.tipo_identificacion)
+
+  const body: Record<string, any> = {
+    type: ['client'],
+    kindOfPerson: c.tipo_persona,
+    regime: c.regimen,
+    identificationObject: {
+      type: c.tipo_identificacion,
+      number: c.numero_identificacion.trim(),
+      ...(c.tipo_identificacion === 'NIT' && c.dv ? { dv: c.dv.trim() } : {}),
+    },
+    email: c.email.trim(),
+    address: {
+      address: c.direccion.trim(),
+      city: c.ciudad.trim(),
+      ...(extranjero ? { country: c.pais?.trim() } : { department: c.departamento?.trim() }),
+    },
+  }
+
+  if (c.tipo_persona === 'PERSON_ENTITY') {
+    const nameObject = splitNombrePersona(c.nombre_cliente)
+    if (!nameObject) throw new Error('Para persona natural el nombre debe incluir nombre y apellido')
+    body.nameObject = nameObject
+  } else {
+    body.name = c.nombre_cliente.trim()
+  }
+
+  const created = await alegraFetch('/contacts', { method: 'POST', body: JSON.stringify(body) })
+  return { id: String(created.id), existing: false }
 }
 
 // ---------------------------------------------------------------------------

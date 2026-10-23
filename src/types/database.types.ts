@@ -164,6 +164,16 @@ export type Database = {
           tiene_factoraje: boolean
           comentarios_factoraje: string | null
           created_at: string
+          email: string | null
+          tipo_identificacion: string | null
+          numero_identificacion: string | null
+          dv: string | null
+          tipo_persona: string | null
+          regimen: string | null
+          direccion: string | null
+          departamento: string | null
+          alegra_contact_id: string | null
+          alegra_sync_error: string | null
         }
         Insert: {
           id?: string
@@ -177,6 +187,16 @@ export type Database = {
           tiene_factoraje?: boolean
           comentarios_factoraje?: string | null
           created_at?: string
+          email?: string | null
+          tipo_identificacion?: string | null
+          numero_identificacion?: string | null
+          dv?: string | null
+          tipo_persona?: string | null
+          regimen?: string | null
+          direccion?: string | null
+          departamento?: string | null
+          alegra_contact_id?: string | null
+          alegra_sync_error?: string | null
         }
         Update: {
           id?: string
@@ -190,6 +210,16 @@ export type Database = {
           tiene_factoraje?: boolean
           comentarios_factoraje?: string | null
           created_at?: string
+          email?: string | null
+          tipo_identificacion?: string | null
+          numero_identificacion?: string | null
+          dv?: string | null
+          tipo_persona?: string | null
+          regimen?: string | null
+          direccion?: string | null
+          departamento?: string | null
+          alegra_contact_id?: string | null
+          alegra_sync_error?: string | null
         }
         Relationships: []
       }
