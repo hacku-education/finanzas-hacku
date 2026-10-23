@@ -41,19 +41,44 @@ async function alegraFetch(endpoint: string, options?: RequestInit) {
 // ---------------------------------------------------------------------------
 
 export async function getAllAlegraContacts() {
-  let allContacts: any[] = []
-  let start = 0
-  const limit = 30
+  const limit = 30 // máximo que permite Alegra por página
+  const first = await alegraFetch(`/contacts?start=0&limit=${limit}&metadata=true`)
+  const firstData: any[] = first.data ?? first
+  if (!Array.isArray(firstData)) return []
+  const total: number | undefined = first.metadata?.total
 
-  while (true) {
-    const result = await alegraFetch(`/contacts?start=${start}&limit=${limit}&metadata=true`)
-    const data = result.data ?? result
-    if (!Array.isArray(data) || data.length === 0) break
-    allContacts = allContacts.concat(data)
-    if (data.length < limit) break
-    start += limit
+  // Con el total conocido, pedir el resto de páginas en paralelo (de a 5) en
+  // vez de una tras otra: con cientos de contactos la versión en serie tardaba
+  // demasiado para el tiempo límite de Vercel.
+  if (typeof total === 'number' && total > firstData.length) {
+    let allContacts = firstData
+    const starts: number[] = []
+    for (let start = limit; start < total; start += limit) starts.push(start)
+    for (let i = 0; i < starts.length; i += 5) {
+      const pages = await Promise.all(
+        starts.slice(i, i + 5).map((start) =>
+          alegraFetch(`/contacts?start=${start}&limit=${limit}&metadata=true`)
+        )
+      )
+      for (const page of pages) {
+        const data = page.data ?? page
+        if (Array.isArray(data)) allContacts = allContacts.concat(data)
+      }
+    }
+    return allContacts
   }
 
+  // Sin metadata: paginación secuencial como antes
+  let allContacts = firstData
+  let start = limit
+  let data = firstData
+  while (data.length === limit) {
+    const result = await alegraFetch(`/contacts?start=${start}&limit=${limit}&metadata=true`)
+    data = result.data ?? result
+    if (!Array.isArray(data) || data.length === 0) break
+    allContacts = allContacts.concat(data)
+    start += limit
+  }
   return allContacts
 }
 

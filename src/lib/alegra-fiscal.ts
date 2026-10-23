@@ -138,3 +138,20 @@ export function validateFiscal(c: CustomerFiscal): Record<string, string> {
 
   return errors
 }
+
+/** Mensaje para el usuario tras crear/editar un cliente, según el resultado en Alegra. */
+export function alegraResultMessage(
+  title: string,
+  alegra: { status: 'not_applicable' } | { status: 'created' | 'linked'; contactId: string } | { status: 'error'; error: string },
+): { title: string; description?: string; variant?: 'destructive' } {
+  if (alegra.status === 'created') return { title, description: 'Cliente creado también en Alegra.' }
+  if (alegra.status === 'linked') return { title, description: 'Ya existía en Alegra con esa identificación: quedó enlazado.' }
+  if (alegra.status === 'error') {
+    return {
+      title: `${title} (sin Alegra)`,
+      description: `No se pudo crear en Alegra: ${alegra.error.substring(0, 200)}. Corrige los datos y usa "Crear en Alegra".`,
+      variant: 'destructive',
+    }
+  }
+  return { title }
+}

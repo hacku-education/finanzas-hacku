@@ -87,7 +87,8 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { SOCIEDADES, MONEDAS } from "@/lib/constants"
 import { AlegraFiscalFields } from "@/components/customers/alegra-fiscal-fields"
-import { requiresAlegra, validateFiscal, mustRequireFiscal } from "@/lib/alegra-fiscal"
+import { requiresAlegra, validateFiscal, mustRequireFiscal, alegraResultMessage } from "@/lib/alegra-fiscal"
+import { useToast } from "@/hooks/use-toast"
 
 export function MasterListsPageClient() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -135,6 +136,7 @@ export function MasterListsPageClient() {
     ciudad: '',
   })
   const [customerFiscalErrors, setCustomerFiscalErrors] = useState<Record<string, string>>({})
+  const { toast } = useToast()
   const [addingRangeFor, setAddingRangeFor] = useState<string | null>(null)
   const [newRange, setNewRange] = useState({ precio_desde: "", precio_hasta: "", porcentaje_comision: "", moneda: "COP" })
   const [loading, setLoading] = useState(true)
@@ -1435,11 +1437,12 @@ export function MasterListsPageClient() {
                   const refreshed = await getCustomers()
                   setCustomers(refreshed || [])
                   setCustomerDialogOpen(false)
-                  if (alegra.status === 'error') {
-                    alert(`Cliente guardado, pero no se pudo crear en Alegra: ${alegra.error.substring(0, 300)}`)
-                  }
+                  toast(alegraResultMessage(
+                    `Cliente "${payload.nombre_cliente}" ${editingCustomer ? 'actualizado' : 'creado'}`,
+                    alegra,
+                  ))
                 } catch (e) {
-                  alert(e instanceof Error ? e.message : 'Error')
+                  toast({ title: 'Error', description: e instanceof Error ? e.message : 'Error', variant: 'destructive' })
                 }
               }}>
                 {editingCustomer ? 'Guardar' : 'Crear'}

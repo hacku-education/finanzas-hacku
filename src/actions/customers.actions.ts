@@ -214,47 +214,78 @@ export async function syncAlegraCustomers(): Promise<{
   const supabase = await createClient()
   const contacts = await getAllAlegraContacts()
 
-  const { data: existing, error: fetchError } = await (supabase as any)
+  // Una sola lectura de los clientes existentes. Sin la migración 050 no existe
+  // alegra_contact_id: se lee sin esa columna.
+  let hasAlegraIdColumn = true
+  let { data: existing, error: fetchError } = await (supabase as any)
     .from('customers')
-    .select('id, nombre_cliente')
+    .select('id, nombre_cliente, sociedad_cliente, alegra_contact_id')
+  if (fetchError && isMissingColumnError(fetchError)) {
+    hasAlegraIdColumn = false
+    ;({ data: existing, error: fetchError } = await (supabase as any)
+      .from('customers')
+      .select('id, nombre_cliente, sociedad_cliente'))
+  }
   if (fetchError) throw new Error(fetchError.message)
 
-  const existingMap = new Map(
-    (existing ?? []).map((c: any) => [c.nombre_cliente.toLowerCase(), c.id])
+  const existingMap = new Map<string, any>(
+    (existing ?? []).map((c: any) => [c.nombre_cliente.toLowerCase(), c])
   )
 
-  let created = 0
+  // Calcular primero qué cambia y escribir solo eso: antes se hacían 1-2 UPDATE
+  // en serie por cada contacto de Alegra (aunque no cambiara nada), lo que con
+  // cientos de contactos superaba el tiempo límite de la función en Vercel.
   let updated = 0
+  const patches: Array<{ id: string; patch: Record<string, any> }> = []
+  const newRows = new Map<string, Record<string, any>>()
 
   for (const contact of contacts) {
     const name: string = contact.name?.trim()
     if (!name) continue
+    const key = name.toLowerCase()
+    const current = existingMap.get(key)
 
-    const existingId = existingMap.get(name.toLowerCase())
-
-    if (existingId) {
-      await (supabase as any)
-        .from('customers')
-        .update({ sociedad_cliente: 'hackÜ SAS' })
-        .eq('id', existingId)
-        .is('sociedad_cliente', null)
-      // Enlazar con el contacto de Alegra (evita que se intente crear de nuevo)
-      await (supabase as any)
-        .from('customers')
-        .update({ alegra_contact_id: String(contact.id), alegra_sync_error: null })
-        .eq('id', existingId)
-        .is('alegra_contact_id', null)
+    if (current) {
       updated++
-    } else {
-      const row = { nombre_cliente: name, sociedad_cliente: 'hackÜ SAS' }
-      let { error } = await (supabase as any)
-        .from('customers')
-        .insert({ ...row, alegra_contact_id: String(contact.id) })
-      // Sin la migración 050 no existe alegra_contact_id: insertar sin el enlace
-      if (error && isMissingColumnError(error)) {
-        ({ error } = await (supabase as any).from('customers').insert(row))
+      const patch: Record<string, any> = {}
+      if (!current.sociedad_cliente) patch.sociedad_cliente = 'hackÜ SAS'
+      // Enlazar con el contacto de Alegra (evita que se intente crear de nuevo)
+      if (hasAlegraIdColumn && !current.alegra_contact_id) {
+        patch.alegra_contact_id = String(contact.id)
+        patch.alegra_sync_error = null
       }
-      if (!error) created++
+      if (Object.keys(patch).length > 0) patches.push({ id: current.id, patch })
+    } else if (!newRows.has(key)) {
+      newRows.set(key, {
+        nombre_cliente: name,
+        sociedad_cliente: 'hackÜ SAS',
+        ...(hasAlegraIdColumn ? { alegra_contact_id: String(contact.id) } : {}),
+      })
+    }
+  }
+
+  // UPDATEs en paralelo, de a 10
+  for (let i = 0; i < patches.length; i += 10) {
+    await Promise.all(
+      patches.slice(i, i + 10).map(({ id, patch }) =>
+        (supabase as any).from('customers').update(patch).eq('id', id)
+      )
+    )
+  }
+
+  // INSERTs en lote; si un lote falla, se reintenta fila por fila para no perder el resto
+  let created = 0
+  const rows = Array.from(newRows.values())
+  for (let i = 0; i < rows.length; i += 200) {
+    const chunk = rows.slice(i, i + 200)
+    const { error } = await (supabase as any).from('customers').insert(chunk)
+    if (!error) {
+      created += chunk.length
+      continue
+    }
+    for (const row of chunk) {
+      const { error: rowError } = await (supabase as any).from('customers').insert(row)
+      if (!rowError) created++
     }
   }
 
