@@ -35,9 +35,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MoreHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { createCustomer, updateCustomer, deleteCustomer, syncAlegraCustomers, syncCustomerToAlegra, type AlegraSyncResult } from '@/actions/customers.actions'
+import { getCustomers, createCustomer, updateCustomer, deleteCustomer, syncAlegraCustomers, syncCustomerToAlegra, type AlegraSyncResult } from '@/actions/customers.actions'
 import { AlegraFiscalFields } from '@/components/customers/alegra-fiscal-fields'
-import { requiresAlegra, mustRequireFiscal, validateFiscal, TIPOS_ID_EXTRANJEROS as TIPOS_EXT, type CustomerFiscal } from '@/lib/alegra-fiscal'
+import { requiresAlegra, mustRequireFiscal, validateFiscal, alegraResultMessage, TIPOS_ID_EXTRANJEROS as TIPOS_EXT, type CustomerFiscal } from '@/lib/alegra-fiscal'
 import { useToast } from '@/hooks/use-toast'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { getVendedores, getPlanes } from '@/actions/master-lists.actions'
@@ -191,19 +191,7 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
   ]
 
   function alegraToast(title: string, alegra: AlegraSyncResult) {
-    if (alegra.status === 'created') {
-      toast({ title, description: 'Cliente creado también en Alegra.' })
-    } else if (alegra.status === 'linked') {
-      toast({ title, description: 'Ya existía en Alegra con esa identificación: quedó enlazado.' })
-    } else if (alegra.status === 'error') {
-      toast({
-        title: `${title} (sin Alegra)`,
-        description: `No se pudo crear en Alegra: ${alegra.error.substring(0, 200)}. Corrige los datos y usa "Crear en Alegra".`,
-        variant: 'destructive',
-      })
-    } else {
-      toast({ title })
-    }
+    toast(alegraResultMessage(title, alegra))
   }
 
   async function handleRetryAlegra(customer: Customer) {
@@ -243,9 +231,14 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
         alegraToast('Cliente actualizado', alegra)
       } else {
         const { alegra } = await createCustomer(formData as CustomerInsert)
-        alegraToast('Cliente creado', alegra)
-        window.location.reload()
-        return
+        // Refrescar la tabla sin recargar la página: un reload borraba el
+        // mensaje de éxito antes de que el usuario alcanzara a verlo.
+        alegraToast(`Cliente "${formData.nombre_cliente}" creado`, alegra)
+        try {
+          setData(await getCustomers())
+        } catch {
+          // el cliente ya se creó; si falla el refresco, se verá al recargar
+        }
       }
       setShowForm(false)
       setEditCustomer(null)
