@@ -30,12 +30,14 @@ import {
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { customerSchema, type CustomerFormData } from '@/lib/validations/customer.schema'
-import { Plus, Pencil, Trash2, Loader2, ArrowUpDown, RefreshCw } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, ArrowUpDown, RefreshCw, UploadCloud } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { MoreHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { createCustomer, updateCustomer, deleteCustomer, syncAlegraCustomers } from '@/actions/customers.actions'
+import { createCustomer, updateCustomer, deleteCustomer, syncAlegraCustomers, syncCustomerToAlegra, type AlegraSyncResult } from '@/actions/customers.actions'
+import { AlegraFiscalFields } from '@/components/customers/alegra-fiscal-fields'
+import { requiresAlegra, mustRequireFiscal, validateFiscal, TIPOS_ID_EXTRANJEROS as TIPOS_EXT, type CustomerFiscal } from '@/lib/alegra-fiscal'
 import { useToast } from '@/hooks/use-toast'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { getVendedores, getPlanes } from '@/actions/master-lists.actions'
@@ -125,6 +127,23 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
       cell: ({ getValue }) => getValue() ? <Badge className="bg-purple-100 text-purple-800 text-xs">Sí</Badge> : null,
     },
     {
+      id: 'alegra',
+      header: 'Alegra',
+      cell: ({ row }) => {
+        const c = row.original
+        if (!requiresAlegra(c)) return null
+        if (c.alegra_contact_id) return <Badge className="bg-green-100 text-green-800 text-xs">Creado</Badge>
+        return (
+          <Badge
+            className="bg-red-100 text-red-800 text-xs"
+            title={c.alegra_sync_error ?? 'Pendiente de crear en Alegra'}
+          >
+            {c.alegra_sync_error ? 'Error' : 'Pendiente'}
+          </Badge>
+        )
+      },
+    },
+    {
       id: 'actions',
       cell: ({ row }) => (
         <DropdownMenu>
@@ -144,11 +163,24 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
                 plan_actual: row.original.plan_actual ?? undefined,
                 tiene_factoraje: row.original.tiene_factoraje,
                 comentarios_factoraje: row.original.comentarios_factoraje ?? undefined,
+                email: row.original.email ?? undefined,
+                tipo_identificacion: row.original.tipo_identificacion ?? undefined,
+                numero_identificacion: row.original.numero_identificacion ?? undefined,
+                dv: row.original.dv ?? undefined,
+                tipo_persona: row.original.tipo_persona ?? undefined,
+                regimen: row.original.regimen ?? undefined,
+                direccion: row.original.direccion ?? undefined,
+                departamento: row.original.departamento ?? undefined,
               })
               setShowForm(true)
             }}>
               <Pencil className="mr-2 h-4 w-4" /> Editar
             </DropdownMenuItem>
+            {requiresAlegra(row.original) && !row.original.alegra_contact_id && (
+              <DropdownMenuItem onClick={() => handleRetryAlegra(row.original)}>
+                <UploadCloud className="mr-2 h-4 w-4" /> Crear en Alegra
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => setDeleteCustomerItem(row.original)} className="text-red-600">
               <Trash2 className="mr-2 h-4 w-4" /> Eliminar
             </DropdownMenuItem>
@@ -158,16 +190,60 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
     },
   ]
 
+  function alegraToast(title: string, alegra: AlegraSyncResult) {
+    if (alegra.status === 'created') {
+      toast({ title, description: 'Cliente creado también en Alegra.' })
+    } else if (alegra.status === 'linked') {
+      toast({ title, description: 'Ya existía en Alegra con esa identificación: quedó enlazado.' })
+    } else if (alegra.status === 'error') {
+      toast({
+        title: `${title} (sin Alegra)`,
+        description: `No se pudo crear en Alegra: ${alegra.error.substring(0, 200)}. Corrige los datos y usa "Crear en Alegra".`,
+        variant: 'destructive',
+      })
+    } else {
+      toast({ title })
+    }
+  }
+
+  async function handleRetryAlegra(customer: Customer) {
+    try {
+      const alegra = await syncCustomerToAlegra(customer.id)
+      alegraToast(customer.nombre_cliente, alegra)
+      if (alegra.status === 'created' || alegra.status === 'linked') {
+        setData((prev) => prev.map((c) => c.id === customer.id ? { ...c, alegra_contact_id: alegra.contactId, alegra_sync_error: null } : c))
+      } else if (alegra.status === 'error') {
+        setData((prev) => prev.map((c) => c.id === customer.id ? { ...c, alegra_sync_error: alegra.error } : c))
+      }
+    } catch (e) {
+      toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
+    }
+  }
+
   async function handleSubmit(formData: CustomerFormData) {
+    if (mustRequireFiscal(formData, editCustomer)) {
+      const fiscalErrors = validateFiscal(formData)
+      if (Object.keys(fiscalErrors).length > 0) {
+        for (const [field, message] of Object.entries(fiscalErrors)) {
+          form.setError(field as keyof CustomerFormData, { type: 'manual', message })
+        }
+        return
+      }
+    }
     setFormLoading(true)
     try {
       if (editCustomer) {
-        await updateCustomer(editCustomer.id, formData as CustomerInsert)
-        setData((prev) => prev.map((c) => c.id === editCustomer.id ? { ...c, ...formData } : c))
-        toast({ title: 'Cliente actualizado' })
+        const { alegra } = await updateCustomer(editCustomer.id, formData as CustomerInsert)
+        setData((prev) => prev.map((c) => c.id === editCustomer.id ? {
+          ...c,
+          ...formData,
+          ...(alegra.status === 'created' || alegra.status === 'linked' ? { alegra_contact_id: alegra.contactId, alegra_sync_error: null } : {}),
+          ...(alegra.status === 'error' ? { alegra_sync_error: alegra.error } : {}),
+        } : c))
+        alegraToast('Cliente actualizado', alegra)
       } else {
-        await createCustomer(formData as CustomerInsert)
-        toast({ title: 'Cliente creado' })
+        const { alegra } = await createCustomer(formData as CustomerInsert)
+        alegraToast('Cliente creado', alegra)
         window.location.reload()
         return
       }
@@ -212,6 +288,17 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
   }
 
   const tieneFactoraje = form.watch('tiene_factoraje')
+  const watchedValues = form.watch()
+  const esSAS = requiresAlegra(watchedValues)
+  const fiscalErrors = Object.fromEntries(
+    Object.entries(form.formState.errors).map(([k, v]) => [k, (v as { message?: string })?.message])
+  )
+  function handleFiscalChange(patch: Partial<CustomerFiscal>) {
+    for (const [k, v] of Object.entries(patch)) {
+      form.setValue(k as keyof CustomerFormData, (v ?? undefined) as never)
+      form.clearErrors(k as keyof CustomerFormData)
+    }
+  }
 
   return (
     <div>
@@ -238,7 +325,7 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
       <DataTable columns={columns} data={filtered} />
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editCustomer ? 'Editar Cliente' : 'Nuevo Cliente'}</DialogTitle>
           </DialogHeader>
@@ -264,10 +351,10 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="pais" render={({ field }) => (
-                  <FormItem><FormLabel>País</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                  <FormItem><FormLabel>País{esSAS && TIPOS_EXT.includes(watchedValues.tipo_identificacion ?? '') ? ' *' : ''}</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                 )} />
                 <FormField control={form.control} name="ciudad" render={({ field }) => (
-                  <FormItem><FormLabel>Ciudad</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                  <FormItem><FormLabel>Ciudad{esSAS ? ' *' : ''}</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                 )} />
                 <FormField control={form.control} name="industria" render={({ field }) => (
                   <FormItem><FormLabel>Industria</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
@@ -303,6 +390,13 @@ export function CustomersPageClient({ initialData }: CustomersPageClientProps) {
                   </FormItem>
                 )} />
               </div>
+              {esSAS && (
+                <AlegraFiscalFields
+                  value={watchedValues}
+                  onChange={handleFiscalChange}
+                  errors={fiscalErrors}
+                />
+              )}
               <FormField control={form.control} name="tiene_factoraje" render={({ field }) => (
                 <FormItem className="flex items-center gap-3">
                   <FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl>
