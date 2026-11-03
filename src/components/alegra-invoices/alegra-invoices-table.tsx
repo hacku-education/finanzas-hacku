@@ -28,7 +28,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Plus, MoreHorizontal, Eye, FileText, CheckCircle, XCircle, ExternalLink, List, LayoutGrid } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-import { updateAlegraRequestStatus, updateAlegraRequest, getAlegraInvoiceDetails, createIncomeInvoiceFromRequest } from '@/actions/alegra.actions'
+import { updateAlegraRequestStatus, updateAlegraRequest, getAlegraInvoiceDetails, createIncomeInvoiceFromRequest, retryAlegraInvoiceDraft } from '@/actions/alegra.actions'
+import { convertToUSDClient } from '@/lib/currency-client'
 import { Pencil } from 'lucide-react'
 import {
   Dialog,
@@ -43,6 +44,8 @@ import { SOCIEDADES } from '@/lib/constants'
 type AlegraInvoiceRequest = {
   id: string
   alegra_invoice_id?: string | null
+  alegra_client_id?: string | null
+  es_cliente_nuevo?: boolean | null
   alegra_client_name: string
   sociedad: string
   moneda: string
@@ -176,6 +179,8 @@ export function AlegraInvoicesTable({ initialData, userEmail, userName }: Alegra
   const [editData, setEditData] = useState<Record<string, any>>({})
   const [savingEdit, setSavingEdit] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const [retryTipo, setRetryTipo] = useState<'factura' | 'orden_servicio'>('factura')
   const [viewMode, setViewMode] = useState<'lista' | 'kanban'>('lista')
   const [filterSociedad, setFilterSociedad] = useState<string>('all')
   const [filterVendedor, setFilterVendedor] = useState<string>('all')
@@ -288,6 +293,46 @@ export function AlegraInvoicesTable({ initialData, userEmail, userName }: Alegra
       toast({ title: 'Error al sincronizar', description: e instanceof Error ? e.message : 'Error', variant: 'destructive' })
     } finally {
       setSyncing(false)
+    }
+  }
+
+  // Solicitudes de hackÜ SAS cuyo envío a Alegra falló al crearlas (quedó la
+  // marca en observaciones y no hay documento en Alegra).
+  function canRetryAlegra(item: AlegraInvoiceRequest) {
+    return (
+      item.sociedad === 'hackÜ SAS' &&
+      !item.alegra_invoice_id &&
+      !item.es_cliente_nuevo &&
+      !['facturada', 'anulada', 'rechazada'].includes(item.status) &&
+      !!item.alegra_client_id && !isNaN(Number(item.alegra_client_id)) &&
+      (item.observaciones ?? '').includes('Error al crear en Alegra:')
+    )
+  }
+
+  async function handleRetryAlegra(item: AlegraInvoiceRequest) {
+    setRetrying(true)
+    try {
+      let exchangeRate: number | undefined
+      if (item.moneda !== 'COP') {
+        // Misma tasa que usa el formulario al crear la solicitud
+        exchangeRate = (await convertToUSDClient(1, 'COP', item.fecha_emision)).rate
+      }
+      const result = await retryAlegraInvoiceDraft(item.id, { tipoDocumento: retryTipo, exchangeRate })
+      const patch = { alegra_invoice_id: result.alegraInvoiceId, observaciones: result.observaciones }
+      setData((prev) => prev.map((r) => r.id === item.id ? { ...r, ...patch } : r))
+      setDetailItem((prev) => prev && prev.id === item.id ? { ...prev, ...patch } : prev)
+      if (result.success) {
+        toast({
+          title: retryTipo === 'factura' ? 'Borrador creado en Alegra' : 'Orden de servicio creada en Alegra',
+          description: `Id en Alegra: ${result.alegraInvoiceId}`,
+        })
+      } else {
+        toast({ title: 'Alegra volvió a rechazar el documento', description: result.error ?? undefined, variant: 'destructive' })
+      }
+    } catch (e) {
+      toast({ title: 'No se pudo reintentar', description: e instanceof Error ? e.message : 'Error', variant: 'destructive' })
+    } finally {
+      setRetrying(false)
     }
   }
 
@@ -594,6 +639,23 @@ export function AlegraInvoicesTable({ initialData, userEmail, userName }: Alegra
                   </Badge>
                 </div>
                 <div className="flex gap-2">
+                  {canRetryAlegra(detailItem) && (
+                    <>
+                      <Select value={retryTipo} onValueChange={(v) => setRetryTipo(v as 'factura' | 'orden_servicio')}>
+                        <SelectTrigger className="h-9 w-[170px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="factura">Factura (Borrador)</SelectItem>
+                          <SelectItem value="orden_servicio">Orden de Servicio</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button size="sm" variant="outline" onClick={() => handleRetryAlegra(detailItem)} disabled={retrying}>
+                        {retrying ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                        Reintentar envío a Alegra
+                      </Button>
+                    </>
+                  )}
                   {detailItem.alegra_invoice_id && detailItem.alegra_invoice_id !== 'nuevo' && detailItem.status !== 'facturada' && (
                     <Button size="sm" variant="outline" onClick={() => handleSyncAlegra(detailItem)} disabled={syncing}>
                       {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
