@@ -306,6 +306,127 @@ export async function createAlegraRemission(data: {
 }
 
 // ---------------------------------------------------------------------------
+// 3c. RETRY: volver a crear en Alegra una solicitud cuyo envío falló
+// ---------------------------------------------------------------------------
+// Al crear la solicitud, si Alegra rechaza el borrador, la solicitud se guarda
+// sin alegra_invoice_id y con esta marca en observaciones. El reintento solo
+// aplica a esas solicitudes (no a cliente nuevo ni link de pago, que nunca se
+// envían a Alegra).
+
+// Debe coincidir con el texto que agrega alegra-invoice-request-form.tsx
+const ALEGRA_ERROR_MARKER ='⚠️ Error al crear en Alegra:'
+
+export async function retryAlegraInvoiceDraft(
+  requestId: string,
+  opts: { tipoDocumento: 'factura' | 'orden_servicio'; exchangeRate?: number },
+): Promise<{ success: boolean; alegraInvoiceId: string | null; error: string | null; observaciones: string | null }> {
+  const supabase = await createClient()
+  const { data: request, error } = await (supabase as any)
+    .from('alegra_invoice_requests')
+    .select('*')
+    .eq('id', requestId)
+    .single()
+  if (error || !request) throw new Error(error?.message ?? 'Solicitud no encontrada')
+
+  if (request.sociedad !== 'hackÜ SAS') throw new Error('Solo aplica a solicitudes de hackÜ SAS')
+  if (request.alegra_invoice_id) throw new Error('La solicitud ya tiene documento en Alegra')
+  if (request.es_cliente_nuevo) throw new Error('Las solicitudes de cliente nuevo no se envían a Alegra')
+  if (['facturada', 'anulada', 'rechazada'].includes(request.status)) {
+    throw new Error(`No se puede reintentar una solicitud ${request.status}`)
+  }
+  const clientId = String(request.alegra_client_id ?? '')
+  if (!clientId || isNaN(Number(clientId))) throw new Error('La solicitud no tiene un cliente de Alegra válido')
+
+  const observaciones: string = request.observaciones ?? ''
+  const markerIdx = observaciones.indexOf(ALEGRA_ERROR_MARKER)
+  if (markerIdx === -1) throw new Error('Esta solicitud no registra un error de envío a Alegra')
+  // Lo que el usuario escribió es lo anterior a la marca: lo demás (comisiones,
+  // diferido, recurrente) es interno y no debe ir en el documento de Alegra.
+  const userObservations = observaciones.slice(0, markerIdx).trim()
+
+  // Ítems: mismo mapeo que el formulario (los planes usan su alegra_item_id)
+  const rawItems: any[] = Array.isArray(request.items) ? request.items : []
+  const planIds = rawItems
+    .map((i) => String(i.alegra_item_id ?? ''))
+    .filter((id) => id.startsWith('plan_'))
+    .map((id) => id.slice('plan_'.length))
+  const planAlegraIds = new Map<string, string | null>()
+  if (planIds.length > 0) {
+    const { data: planes, error: planesError } = await (supabase as any)
+      .from('planes')
+      .select('id, alegra_item_id')
+      .in('id', planIds)
+    if (planesError) throw new Error(planesError.message)
+    for (const p of planes ?? []) planAlegraIds.set(String(p.id), p.alegra_item_id ? String(p.alegra_item_id) : null)
+  }
+  const items = rawItems
+    .filter((i) => i.alegra_item_id && i.alegra_item_id !== '__nuevo__')
+    .map((i) => {
+      let alegraId: string | null = String(i.alegra_item_id)
+      if (alegraId.startsWith('plan_')) alegraId = planAlegraIds.get(alegraId.slice('plan_'.length)) ?? null
+      if (!alegraId || isNaN(Number(alegraId))) return null
+      return {
+        id: Number(alegraId) as any,
+        price: Number(i.price),
+        quantity: Number(i.quantity),
+        description: i.description || i.name || undefined,
+        discount: Number(i.discount) || 0,
+      }
+    })
+    .filter(Boolean) as Array<{ id: string; price: number; quantity: number; description?: string; discount?: number }>
+  if (items.length === 0) throw new Error('Ningún ítem de la solicitud tiene ítem de Alegra')
+
+  let currency: { code: string; exchangeRate: string } | undefined
+  if (request.moneda !== 'COP') {
+    if (!opts.exchangeRate) throw new Error('Falta la tasa de cambio para la moneda ' + request.moneda)
+    currency = { code: request.moneda, exchangeRate: String(opts.exchangeRate) }
+  }
+
+  const common = {
+    clientId,
+    date: request.fecha_emision,
+    dueDate: request.fecha_vencimiento,
+    items,
+    currency,
+    observations: userObservations || undefined,
+    anotation: request.anotaciones || undefined,
+    purchaseOrderNumber: request.oc_numero || undefined,
+  }
+  const result = opts.tipoDocumento === 'orden_servicio'
+    ? await createAlegraRemission({ ...common, documentName: 'serviceOrder' })
+    : await createAlegraInvoiceDraft(common)
+
+  const alegraInvoiceId = result.success ? String(result.data?.id ?? '') || null : null
+  const errorText = result.success ? null : result.error || 'Error en Alegra'
+
+  // Quitar la marca anterior; si volvió a fallar, dejar el error nuevo en su lugar
+  const markerLineEnd = observaciones.indexOf('\n', markerIdx)
+  const before = observaciones.slice(0, markerIdx).replace(/\s+$/, '')
+  const after = markerLineEnd === -1 ? '' : observaciones.slice(markerLineEnd)
+  const newObservaciones = errorText
+    ? `${before}\n\n${ALEGRA_ERROR_MARKER} ${errorText}${after}`
+    : `${before}${after}`.trim()
+
+  const patch: Record<string, any> = { observaciones: newObservaciones || null }
+  if (alegraInvoiceId) patch.alegra_invoice_id = alegraInvoiceId
+  const { error: updateError } = await (supabase as any)
+    .from('alegra_invoice_requests')
+    .update(patch)
+    .eq('id', requestId)
+  if (updateError) {
+    // El documento ya existe en Alegra: no perder su id aunque falle el guardado
+    throw new Error(
+      alegraInvoiceId
+        ? `Se creó en Alegra (id ${alegraInvoiceId}) pero no se pudo guardar en la solicitud: ${updateError.message}`
+        : updateError.message,
+    )
+  }
+  try { revalidatePath('/alegra-invoices') } catch { /* ignore */ }
+
+  return { success: !!alegraInvoiceId, alegraInvoiceId, error: errorText, observaciones: patch.observaciones }
+}
+
+// ---------------------------------------------------------------------------
 // 4. CREATE INVOICE REQUEST (save to our DB)
 // ---------------------------------------------------------------------------
 
