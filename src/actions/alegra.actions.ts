@@ -733,7 +733,6 @@ export async function createIncomeInvoiceFromRequest(requestId: string) {
     monto_creacion_contenido: 0,
     total_usd: request.total_usd || null,
     currency_exchange_rate: request.currency_exchange_rate || null,
-    total_moneda_local: request.total || null,
     fecha_creacion: request.fecha_emision,
     fecha_vencimiento: request.fecha_vencimiento,
     estado: 'Pendiente',
@@ -1188,7 +1187,6 @@ export async function importAlegraInvoice(alegraInvoiceId: string) {
     monto_recurrente: total,
     monto_no_recurrente: 0,
     monto_creacion_contenido: 0,
-    total_moneda_local: total,
     total_usd: moneda === 'USD' ? total : null,
     items: items.length > 0 ? items : null,
   }
