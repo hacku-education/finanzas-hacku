@@ -30,6 +30,7 @@ import { Plus, MoreHorizontal, Eye, FileText, CheckCircle, XCircle, ExternalLink
 import { useToast } from '@/hooks/use-toast'
 import { updateAlegraRequestStatus, updateAlegraRequest, getAlegraInvoiceDetails, createIncomeInvoiceFromRequest, retryAlegraInvoiceDraft } from '@/actions/alegra.actions'
 import { convertToUSDClient } from '@/lib/currency-client'
+import { ALEGRA_ERROR_MARKER } from '@/lib/alegra-items'
 import { Pencil } from 'lucide-react'
 import {
   Dialog,
@@ -296,8 +297,9 @@ export function AlegraInvoicesTable({ initialData, userEmail, userName }: Alegra
     }
   }
 
-  // Solicitudes de hackÜ SAS cuyo envío a Alegra falló al crearlas (quedó la
-  // marca en observaciones y no hay documento en Alegra).
+  // Solicitudes de hackÜ SAS cuyo envío a Alegra falló al crearlas: no hay
+  // documento en Alegra y quedó la marca de error en observaciones, o quedaron
+  // en 'borrador' (solo se pone ese estado cuando se debía enviar a Alegra).
   function canRetryAlegra(item: AlegraInvoiceRequest) {
     return (
       item.sociedad === 'hackÜ SAS' &&
@@ -305,7 +307,7 @@ export function AlegraInvoicesTable({ initialData, userEmail, userName }: Alegra
       !item.es_cliente_nuevo &&
       !['facturada', 'anulada', 'rechazada'].includes(item.status) &&
       !!item.alegra_client_id && !isNaN(Number(item.alegra_client_id)) &&
-      (item.observaciones ?? '').includes('Error al crear en Alegra:')
+      ((item.observaciones ?? '').includes(ALEGRA_ERROR_MARKER) || item.status === 'borrador')
     )
   }
 

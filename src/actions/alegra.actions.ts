@@ -3,6 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { ALEGRA_ERROR_MARKER, resolveAlegraItems, userObservationsForAlegra } from '@/lib/alegra-items'
 import { revalidatePath } from 'next/cache'
 import { SOCIEDADES } from '@/lib/constants'
 import { splitNombrePersona, TIPOS_ID_EXTRANJEROS } from '@/lib/alegra-fiscal'
@@ -308,13 +309,12 @@ export async function createAlegraRemission(data: {
 // ---------------------------------------------------------------------------
 // 3c. RETRY: volver a crear en Alegra una solicitud cuyo envío falló
 // ---------------------------------------------------------------------------
-// Al crear la solicitud, si Alegra rechaza el borrador, la solicitud se guarda
-// sin alegra_invoice_id y con esta marca en observaciones. El reintento solo
-// aplica a esas solicitudes (no a cliente nuevo ni link de pago, que nunca se
-// envían a Alegra).
-
-// Debe coincidir con el texto que agrega alegra-invoice-request-form.tsx
-const ALEGRA_ERROR_MARKER ='⚠️ Error al crear en Alegra:'
+// Al crear la solicitud (formulario o cron de recurrentes), si Alegra rechaza
+// el documento la solicitud se guarda sin alegra_invoice_id. El reintento
+// aplica a esas solicitudes: las que tienen la marca de error en observaciones
+// y las que quedaron en 'borrador' sin documento (recurrentes creadas antes de
+// que el cron dejara la marca). No aplica a cliente nuevo ni link de pago, que
+// nunca se envían a Alegra.
 
 export async function retryAlegraInvoiceDraft(
   requestId: string,
@@ -339,41 +339,14 @@ export async function retryAlegraInvoiceDraft(
 
   const observaciones: string = request.observaciones ?? ''
   const markerIdx = observaciones.indexOf(ALEGRA_ERROR_MARKER)
-  if (markerIdx === -1) throw new Error('Esta solicitud no registra un error de envío a Alegra')
-  // Lo que el usuario escribió es lo anterior a la marca: lo demás (comisiones,
-  // diferido, recurrente) es interno y no debe ir en el documento de Alegra.
-  const userObservations = observaciones.slice(0, markerIdx).trim()
-
-  // Ítems: mismo mapeo que el formulario (los planes usan su alegra_item_id)
-  const rawItems: any[] = Array.isArray(request.items) ? request.items : []
-  const planIds = rawItems
-    .map((i) => String(i.alegra_item_id ?? ''))
-    .filter((id) => id.startsWith('plan_'))
-    .map((id) => id.slice('plan_'.length))
-  const planAlegraIds = new Map<string, string | null>()
-  if (planIds.length > 0) {
-    const { data: planes, error: planesError } = await (supabase as any)
-      .from('planes')
-      .select('id, alegra_item_id')
-      .in('id', planIds)
-    if (planesError) throw new Error(planesError.message)
-    for (const p of planes ?? []) planAlegraIds.set(String(p.id), p.alegra_item_id ? String(p.alegra_item_id) : null)
+  if (markerIdx === -1 && request.status !== 'borrador') {
+    throw new Error('Esta solicitud no registra un error de envío a Alegra')
   }
-  const items = rawItems
-    .filter((i) => i.alegra_item_id && i.alegra_item_id !== '__nuevo__')
-    .map((i) => {
-      let alegraId: string | null = String(i.alegra_item_id)
-      if (alegraId.startsWith('plan_')) alegraId = planAlegraIds.get(alegraId.slice('plan_'.length)) ?? null
-      if (!alegraId || isNaN(Number(alegraId))) return null
-      return {
-        id: Number(alegraId) as any,
-        price: Number(i.price),
-        quantity: Number(i.quantity),
-        description: i.description || i.name || undefined,
-        discount: Number(i.discount) || 0,
-      }
-    })
-    .filter(Boolean) as Array<{ id: string; price: number; quantity: number; description?: string; discount?: number }>
+  // Solo lo que escribió el usuario: comisiones, diferido, recurrente y la
+  // marca de error son internos y no van en el documento de Alegra.
+  const userObservations = userObservationsForAlegra(observaciones)
+
+  const items = await resolveAlegraItems(supabase, request.items)
   if (items.length === 0) throw new Error('Ningún ítem de la solicitud tiene ítem de Alegra')
 
   let currency: { code: string; exchangeRate: string } | undefined
@@ -400,8 +373,8 @@ export async function retryAlegraInvoiceDraft(
   const errorText = result.success ? null : result.error || 'Error en Alegra'
 
   // Quitar la marca anterior; si volvió a fallar, dejar el error nuevo en su lugar
-  const markerLineEnd = observaciones.indexOf('\n', markerIdx)
-  const before = observaciones.slice(0, markerIdx).replace(/\s+$/, '')
+  const markerLineEnd = markerIdx === -1 ? -1 : observaciones.indexOf('\n', markerIdx)
+  const before = (markerIdx === -1 ? observaciones : observaciones.slice(0, markerIdx)).replace(/\s+$/, '')
   const after = markerLineEnd === -1 ? '' : observaciones.slice(markerLineEnd)
   const newObservaciones = errorText
     ? `${before}\n\n${ALEGRA_ERROR_MARKER} ${errorText}${after}`

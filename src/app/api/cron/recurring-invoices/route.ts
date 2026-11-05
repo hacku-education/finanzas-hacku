@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createAlegraInvoiceDraft, createAlegraRemission, createAlegraInvoiceRequest, sendSlackNewRequestNotification } from "@/actions/alegra.actions"
 import { requireCronSecret } from "@/lib/api-auth"
+import { ALEGRA_ERROR_MARKER, resolveAlegraItems } from "@/lib/alegra-items"
 
 export async function GET(request: Request) {
   const denied = requireCronSecret(request)
@@ -36,6 +37,7 @@ export async function GET(request: Request) {
     try {
       const isHackuSAS = tpl.sociedad === 'hackÜ SAS'
       let alegraId: string | null = null
+      let alegraError: string | null = null
 
       // Calculate dates
       const fechaEmision = todayStr
@@ -45,15 +47,12 @@ export async function GET(request: Request) {
 
       // Create in Alegra if SAS
       if (isHackuSAS && tpl.alegra_client_id && tpl.alegra_client_id !== 'nuevo') {
-        const alegraItems = (tpl.items || []).map((item: any) => ({
-          id: item.alegra_item_id || item.id,
-          price: item.price,
-          quantity: item.quantity,
-          description: item.description || undefined,
-          discount: item.discount || 0,
-        }))
+        // Los planes se guardan como plan_<uuid>: hay que traducirlos a su ítem de Alegra
+        const alegraItems = await resolveAlegraItems(supabase, tpl.items)
 
-        if (tpl.tipo_documento === 'orden_servicio') {
+        if (alegraItems.length === 0) {
+          alegraError = 'Ningún ítem de la plantilla tiene ítem de Alegra'
+        } else if (tpl.tipo_documento === 'orden_servicio') {
           const result = await createAlegraRemission({
             clientId: tpl.alegra_client_id,
             date: fechaEmision,
@@ -62,7 +61,8 @@ export async function GET(request: Request) {
             observations: tpl.observaciones || undefined,
             anotation: tpl.anotaciones || undefined,
           })
-          if (result.success) alegraId = String(result.data?.id ?? '')
+          if (result.success) alegraId = String(result.data?.id ?? '') || null
+          else alegraError = result.error || 'Error en Alegra'
         } else {
           const result = await createAlegraInvoiceDraft({
             clientId: tpl.alegra_client_id,
@@ -72,7 +72,8 @@ export async function GET(request: Request) {
             observations: tpl.observaciones || undefined,
             anotation: tpl.anotaciones || undefined,
           })
-          if (result.success) alegraId = String(result.data?.id ?? '')
+          if (result.success) alegraId = String(result.data?.id ?? '') || null
+          else alegraError = result.error || 'Error en Alegra'
         }
       }
 
@@ -85,7 +86,11 @@ export async function GET(request: Request) {
         moneda: tpl.moneda,
         fecha_emision: fechaEmision,
         fecha_vencimiento: fechaVencimiento,
-        observaciones: `${tpl.observaciones || ''}\n\n[Factura recurrente - día ${tpl.dia_recurrencia} de cada mes]`.trim(),
+        // Si Alegra rechazó el documento, dejar la marca para poder reintentar desde la UI
+        observaciones: (
+          `${tpl.observaciones || ''}\n\n[Factura recurrente - día ${tpl.dia_recurrencia} de cada mes]` +
+          (alegraError ? `\n\n${ALEGRA_ERROR_MARKER} ${alegraError}` : '')
+        ).trim(),
         anotaciones: tpl.anotaciones || null,
         items: tpl.items,
         subtotal: tpl.total,
@@ -119,7 +124,7 @@ export async function GET(request: Request) {
         .update({ ultima_ejecucion: todayStr })
         .eq('id', tpl.id)
 
-      results.push({ id: tpl.id, client: tpl.alegra_client_name, status: 'created', alegraId })
+      results.push({ id: tpl.id, client: tpl.alegra_client_name, status: 'created', alegraId, alegraError })
     } catch (e: any) {
       results.push({ id: tpl.id, client: tpl.alegra_client_name, status: 'error', error: e.message })
     }
