@@ -6,7 +6,7 @@ export const alegraInvoiceItemSchema = z.object({
   name: z.string().optional().default(''),
   description: z.string().optional(),
   quantity: z.coerce.number().positive('Cantidad debe ser positiva'),
-  price: z.coerce.number().min(0, 'Precio inválido'),
+  price: z.coerce.number().positive('El precio debe ser mayor a 0'),
   discount: z.coerce.number().min(0).max(100).optional(),
   tax: z.array(z.object({ id: z.string() })).optional(),
   subtotal: z.number().optional(),
