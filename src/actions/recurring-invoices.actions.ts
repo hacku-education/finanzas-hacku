@@ -3,6 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { assertItemPricesPositive } from '@/lib/alegra-items'
 
 export async function createRecurringTemplate(data: {
   alegra_client_id?: string
@@ -23,6 +24,7 @@ export async function createRecurringTemplate(data: {
   porcentaje_comision?: number
   tipo_documento?: string
 }) {
+  assertItemPricesPositive(data.items)
   const supabase = await createClient()
   const { data: created, error } = await (supabase as any)
     .from('recurring_invoice_templates')

@@ -63,3 +63,16 @@ export function userObservationsForAlegra(observaciones: string | null | undefin
   const base = markerIdx === -1 ? text : text.slice(0, markerIdx)
   return base.replace(RECURRING_TAG_RE, '').trim()
 }
+
+/**
+ * Alegra rechaza ítems con precio 0 ("El precio de los items debe ser mayor a
+ * cero", code 3310). Lanza un error si alguno de los ítems no tiene precio.
+ */
+export function assertItemPricesPositive(rawItems: unknown): void {
+  const list: any[] = Array.isArray(rawItems) ? rawItems : []
+  const sinPrecio = list.filter((i) => !(Number(i?.price) > 0))
+  if (sinPrecio.length > 0) {
+    const nombres = sinPrecio.map((i) => i?.name || i?.description || 'ítem sin nombre').join(', ')
+    throw new Error(`El precio de cada ítem debe ser mayor a 0 (${nombres})`)
+  }
+}

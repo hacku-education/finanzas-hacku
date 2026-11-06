@@ -3,6 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { assertItemPricesPositive } from '@/lib/alegra-items'
 
 export async function getRecurringTemplates() {
   const supabase = await createClient()
@@ -36,6 +37,7 @@ export async function deleteRecurringTemplate(id: string) {
 }
 
 export async function updateRecurringTemplate(id: string, data: Record<string, any>) {
+  if ('items' in data) assertItemPricesPositive(data.items)
   const supabase = await createClient()
   const { error } = await (supabase as any)
     .from('recurring_invoice_templates')
