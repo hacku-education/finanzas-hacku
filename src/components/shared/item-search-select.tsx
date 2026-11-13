@@ -71,7 +71,12 @@ export function ItemSearchSelect({ items, value, onSelect, placeholder = 'Selecc
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <div className="max-h-[300px] overflow-y-auto overscroll-contain p-1">
+        {/* Stop wheel/touch from reaching the parent Dialog's scroll lock (popover is portaled outside it) */}
+        <div
+          className="max-h-[300px] overflow-y-auto overscroll-contain p-1"
+          onWheel={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+        >
           {filtered.length === 0 && (
             <p className="py-6 text-center text-sm text-muted-foreground">No se encontraron items.</p>
           )}
